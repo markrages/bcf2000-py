@@ -1,4 +1,6 @@
-#!/usr/bin/python
+#!/usr/bin/python3
+
+from __future__ import print_function
 
 import os
 
@@ -8,21 +10,22 @@ class BcfConfig(object):
         self.text = [] # list of lines of text
 
     def load_text(self, text):
-        self.text = [x.strip() for x in text.split('\n')]
+        self.text = [x.strip() for x in text.split(b'\n')]
 
     @property
     def dump(self):
         assert self.header
         ret = []
         for seq,line in enumerate(self.text):
-            ret.append(''.join(['\xf0', # sysex begin
-                                ''.join(chr(x) for x in self.header+[seq>>7, seq & 0x7f]),
-                                line,
-                                '\xf7'])) # sysex end
+            ret.append(b'\xf0'+ # sysex begin
+                       self.header+
+                       bytes([seq>>7, seq & 0x7f])+
+                       line+
+                       b'\xf7') # sysex end
 
         for r in []: #ret:
-            print " ".join("%02x"%ord(c) for c in r),
-            print repr(r)
+            print(" ".join("%02x"%ord(c) for c in r), end=' ')
+            print(repr(r))
         return ret #''.join(ret)
 
     @dump.setter
@@ -38,9 +41,9 @@ class BcfConfig(object):
         assert sequence==len(self.text)
         self.text.append(sysex[9:-1])
 
-config = BcfConfig([0x00, 0x20, 0x32, 0x00, 0x14, 0x20])
+config = BcfConfig(bytes([0x00, 0x20, 0x32, 0x00, 0x14, 0x20]))
 
-config.load_text("""$rev F1
+config.load_text(b"""$rev F1
 $preset
   .name 'all controls            '
   .snapshot off
@@ -520,8 +523,8 @@ import time
 class BCF2000(object):
     def __init__(self):
         fdnum = os.open('/dev/midi2',os.O_NONBLOCK | os.O_RDWR)
-        self.fd = os.fdopen(fdnum, 'w+', 0)
-        self.buf = []
+        self.fd = os.fdopen(fdnum, 'wb+', 0)
+        self.buf = b''
         self.controllers = [None]*122
         self.load_sysex(config)
 
@@ -536,11 +539,11 @@ class BCF2000(object):
                 except IOError as e:
                     if e.errno != 11:
                         raise
-                    print "retry",i,d
+                    print("retry",i,d)
 
     def setup_fader(self, number, ccnum, fmin, fmax):
-        config = BcfConfig([0x00, 0x20, 0x32, 0x00, 0x14, 0x20])
-        config.load_text("""$rev F1
+        config = BcfConfig(bytes([0x00, 0x20, 0x32, 0x00, 0x14, 0x20]))
+        config.load_text(b"""$rev F1
 $preset
 $fader %d
   .easypar CC 1 %d %d %d absolute/14
@@ -554,8 +557,8 @@ $end
         self.load_sysex(config)
 
     def setup_encoder(self, number, ccnum, fmin, fmax):
-        config = BcfConfig([0x00, 0x20, 0x32, 0x00, 0x14, 0x20])
-        config.load_text("""$rev F1
+        config = BcfConfig(bytes([0x00, 0x20, 0x32, 0x00, 0x14, 0x20]))
+        config.load_text(b"""$rev F1
 $preset
 $encoder %d
   .easypar CC 1 %d %d %d absolute/14
@@ -570,14 +573,15 @@ $end
     def poll(self):
         while 1:
             try:
-                b = ord(self.fd.read(1))
+                b = self.fd.read(1)
             except IOError as e:
                 if e.errno != 11:
                     raise
                 return
 
-            self.buf.append(b)
-            self.checkbuf()
+            if not b is None:
+                self.buf = self.buf + b
+                self.checkbuf()
 
     def checkbuf(self):
         while self.buf and not (self.buf[0] & 0x80):
@@ -592,11 +596,11 @@ $end
             if command==0xb0: # CC
                 if len_ == 3:
                     self.cc(self.buf)
-                    self.buf=[]
+                    self.buf=b''
             elif command==0xf0: # SysEx dump
                 if self.buf[-1] == 0xf7:
                     self.sysex(self.buf)
-                    self.buf=[]
+                    self.buf=b''
             else:
                 raise Exception("unknown command 0x%02x"%command)
 
@@ -613,7 +617,7 @@ $end
             self.on_new_cc(controller)
 
     def on_new_cc(self, cont):
-        print "cont",cont,self.controllers[cont]
+        print("cont",cont,self.controllers[cont])
         # Example: tie faders 1 & 2 together
 
         if cont==2:
@@ -626,7 +630,7 @@ $end
             val_msb = val >> 7
             val_lsb = val & 0x7f
             cmd = [0xb0, cont, val_msb, cont+32, val_lsb]
-            self.fd.write(''.join(chr(x) for x in cmd))
+            self.fd.write(bytes(cmd))
 
     def sysex(self, buf):
         if not self.config:
